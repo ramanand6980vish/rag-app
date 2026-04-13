@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+
 from langchain_mistralai import MistralAIEmbeddings, ChatMistralAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
@@ -8,63 +9,47 @@ from langchain_core.prompts import ChatPromptTemplate
 
 st.title("📄 RAG Chat App")
 
-api_key = st.text_input("Enter your Mistral API Key", type="password")
+api_key = st.text_input("Mistral API Key", type="password")
 
 if api_key:
     os.environ["MISTRAL_API_KEY"] = api_key
 
-    embedding_model = MistralAIEmbeddings()
+    embedding = MistralAIEmbeddings(api_key=api_key)
 
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    file = st.file_uploader("Upload PDF", type=["pdf"])
 
-    vectorstore = None
-
-    if uploaded_file:
+    if file:
         with open("temp.pdf", "wb") as f:
-            f.write(uploaded_file.read())
+            f.write(file.read())
 
-        loader = PyPDFLoader("temp.pdf")
-        docs = loader.load()
+        docs = PyPDFLoader("temp.pdf").load()
+        chunks = RecursiveCharacterTextSplitter(500, 50).split_documents(docs)
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
-        )
-        chunks = splitter.split_documents(docs)
+        db = Chroma.from_documents(chunks, embedding)
 
-        vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=embedding_model
-        )
+        st.success("PDF processed!")
 
-        st.success("File processed successfully")
+        query = st.text_input("Ask question")
 
-    query = st.text_input("Ask a question")
+        if query:
+            retriever = db.as_retriever(search_kwargs={"k": 4})
 
-    if query and vectorstore:
-        retriever = vectorstore.as_retriever(
-            search_type="mmr",
-            search_kwargs={"k": 4, "fetch_k": 10, "lambda_mult": 0.5}
-        )
+            context = "\n\n".join(
+                [d.page_content for d in retriever.invoke(query)]
+            )
 
-        llm = ChatMistralAI(model="mistral-small-2506")
+            llm = ChatMistralAI(model="mistral-small-2506", api_key=api_key)
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "Use only context. If not found, say not available."),
-            ("human", "context: {context}\nQuestion: {question}")
-        ])
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "Answer only from context. If missing, say not found."),
+                ("human", "context:{context}\nquestion:{question}")
+            ])
 
-        docs = retriever.invoke(query)
-        context = "\n\n".join([d.page_content for d in docs])
+            res = llm.invoke(
+                prompt.invoke({"context": context, "question": query}).to_messages()
+            )
 
-        final_prompt = prompt.invoke({
-            "context": context,
-            "question": query
-        })
-
-        response = llm.invoke(final_prompt.to_messages())
-
-        st.write("🤖 AI:", response.content)
+            st.write("🤖", res.content)
 
 else:
-    st.warning("Enter API key first")
+    st.warning("Enter API key")
