@@ -1,0 +1,9 @@
+streamlit
+langchain
+langchain-community
+langchain-core
+langchain-mistralai
+chromadb
+python-dotenv
+bs4
+tiktoken
